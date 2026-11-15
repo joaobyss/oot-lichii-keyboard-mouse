@@ -30,3 +30,10 @@ To use Lichii's menus with the mouse, Alt+Tab away and back (or close the helper
 - Patch: `native-camera/patch/build_native_camera_ips.py` (LLVM clang + ld.lld) writes `native-camera/MouseCamera-Native/exefs/<build id>.ips`; `--main <decompressed main as ELF>` checks the replaced instruction first. `test_cave.c` tests the mouse logic on the PC.
 - Helper: `native-camera/helper/build.bat` (Visual Studio C compiler).
 - `WRAP_X` / `WRAP_Y` in `cave.c` and `MC_WRAP_X` / `MC_WRAP_Y` in `mouse_capture.h` must match.
+
+## Since v1.4.3 (numbers changed)
+The helper keeps the pointer within half a period of the picture centre and jumps it back by exactly one period; the patch undoes jumps of one period.
+Period = 1024 x 576 game pixels (80% of the picture; `WRAP_X/WRAP_Y` in `cave.c`, `MC_WRAP_X/MC_WRAP_Y` in `mouse_capture.h`).
+A move of up to 512 x 288 px between two mouse reads is read exactly. v1.4.4 adds `unwrap_fast`: once the previous move was bigger than 30% of
+half a period, the candidate nearest to it is taken, so much faster turns are followed; a nearly zero sample is always taken as "stopped".
+`mouse_step` (default 0.5) scales how many game pixels one mouse count is worth; `Apply-Settings.ps1` scales the degrees per pixel by the inverse.

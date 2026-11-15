@@ -1,5 +1,31 @@
 # Changelog
 
+## v1.4.7 - 2026-11-15
+- **The pointer hides while the game has the mouse** (native camera): the helper swaps the Windows arrow and busy cursors for an invisible one
+  while it is active, and puts the user's own back (`SPI_SETCURSORS`) when it pauses, when the game closes, when the helper is closed, and
+  at the next start after a crash. The emulator's own "hide after 2.5 s idle" never fires while you play, which is why the pointer stayed on screen.
+- `hide_cursor = false` in the settings file switches this off.
+
+## v1.4.6 - 2026-11-15
+- **Helper keeps its timing while the game is busy:** high process priority, Windows power throttling switched off (Windows 11 slows
+  timers of minimized windows) and a high-resolution timer instead of `Sleep(1)`. Fewer stalls, so fewer pointer escapes on fast turns.
+- Log line `scheduling: ...` shows what was set.
+
+## v1.4.5 - 2026-11-14
+- **The helper starts by itself:** `Apply-Settings` (and the settings program) keep `OoT-MouseCapture.exe` running from its own copy in
+  `%LOCALAPPDATA%\OoT-MouseCapture` and start it at logon (`helper_autostart = true`); it waits for the game, one copy at a time.
+- **`OoT-MouseCapture-log.txt`:** picture size, mouse step, pointer speed read back from Windows, pause reasons, escapes, slowest loop, biggest pointer move.
+- Helper argument `--data <folder>` (Lichii's data folder: settings and log live there).
+
+## v1.4.4 - 2026-11-14
+- **Native camera follows much faster turns:** `unwrap_fast` in the patch uses the previous move to pick the right candidate once a move is bigger
+  than 30% of half a period; a nearly zero sample is always a stop (never a spin). Normal speeds behave exactly as before (simulation + PC test).
+
+## v1.4.3 - 2026-11-13
+- Wrap period 1024 x 576 game pixels (was 512 x 384): the patch follows a move of up to 512 x 288 px between two mouse reads (was 256 x 192).
+- New `mouse_step` (default 0.5): game pixels per mouse count; `Apply-Settings` raises the degrees per pixel by the same factor.
+- Default layout: Hookshot "Nintendo" (E/Z/Space/Q, F/R, mouse buttons = ZL/ZR, Tab/M, Ctrl/C, 1-4), walk key Shift.
+
 ## v1.4.2 – 2026-11-12
 
 - **Native camera: no more "invisible wall".** When a fast move or a busy PC carried the pointer out of the game picture before `OoT-MouseCapture.exe` caught it (mostly with Lichii in a window), the helper let go, Lichii held the game's mouse at the edge of the picture, and the camera stopped until the mouse came back. The helper now stays active until another window comes in front and brings an escaped pointer straight back; it also runs at a higher priority so the emulator cannot keep it waiting. In a simulation of a busy PC with a windowed game, the camera went from losing about 95 % of a fast turn to about 5 %.

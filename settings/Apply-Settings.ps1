@@ -108,8 +108,8 @@ $defaults = [ordered]@{
     'dpad_up' = '1'; 'dpad_left' = '2'; 'dpad_right' = '3'; 'dpad_down' = '4'
     'button_home' = 'none'; 'button_screenshot' = 'none'
     'move_up' = 'w'; 'move_down' = 's'; 'move_left' = 'a'; 'move_right' = 'd'; 'walk_key' = 'z'; 'walk_speed' = '0.5'
-    'mouse_sens' = '5.0'; 'mouse_sens_x' = ''; 'mouse_sens_y' = ''; 'mouse_invert_y' = 'false'; 'mouse_camera' = 'stick'
-    'mouse_deadzone_boost' = '20'; 'mouse_stop_speed' = '18'; 'mouse_min_decay' = '6'; 'hide_cursor' = 'true'
+    'mouse_sens' = '5.0'; 'mouse_sens_x' = ''; 'mouse_sens_y' = ''; 'mouse_invert_y' = 'false'; 'mouse_camera' = 'stick'; 'mouse_step' = '0.5'
+    'mouse_deadzone_boost' = '20'; 'mouse_stop_speed' = '18'; 'mouse_min_decay' = '6'; 'hide_cursor' = 'true'; 'helper_autostart' = 'true'
 }
 
 if (-not (Test-Path -LiteralPath $Settings)) {
@@ -181,11 +181,13 @@ $sens = ConvertTo-Number (Get-Setting 'mouse_sens') 0.1 10.0 'mouse_sens' $false
 $sensX = $sens; $sensY = $sens
 if ((Get-Setting 'mouse_sens_x') -ne '') { $sensX = ConvertTo-Number (Get-Setting 'mouse_sens_x') 0.1 10.0 'mouse_sens_x' $false }
 if ((Get-Setting 'mouse_sens_y') -ne '') { $sensY = ConvertTo-Number (Get-Setting 'mouse_sens_y') 0.1 10.0 'mouse_sens_y' $false }
+$mouseStep = ConvertTo-Number (Get-Setting 'mouse_step') 0.125 1.0 'mouse_step' $false
 $deadzone = ConvertTo-Number (Get-Setting 'mouse_deadzone_boost') 0 100 'mouse_deadzone_boost' $true
 $stopSpeed = ConvertTo-Number (Get-Setting 'mouse_stop_speed') 0 100 'mouse_stop_speed' $true
 $minDecay = ConvertTo-Number (Get-Setting 'mouse_min_decay') 0 100 'mouse_min_decay' $true
 $invertY = ConvertTo-Bool (Get-Setting 'mouse_invert_y') 'mouse_invert_y'
 $hideCursor = ConvertTo-Bool (Get-Setting 'hide_cursor') 'hide_cursor'
+$autostart = ConvertTo-Bool (Get-Setting 'helper_autostart') 'helper_autostart'
 $camera = ConvertTo-Choice (Get-Setting 'mouse_camera') @('stick', 'native') 'mouse_camera'
 $native = ($camera -eq 'native')
 
@@ -281,7 +283,9 @@ $ipsOff = $ipsPath + '.off'
 # Camera speed in native mode: degrees per mouse step. OoT-MouseCapture sets the Windows pointer speed so that one
 # step of the mouse is one pixel of the game's 1280x720 picture, so this is degrees per mouse count.
 # mouse_sens 5 = 0.06 degrees: about 15 cm of mouse for a full turn at 1600 DPI.
-function Get-NativeDegrees([double]$scale) { return $scale * 0.012 }
+# mouse_step = game pixels per mouse count (OoT-MouseCapture reads it too): with 0.5 one count is half a pixel, so a
+# pixel is worth twice the degrees and the camera speed stays the same.
+function Get-NativeDegrees([double]$scale) { return $scale * 0.012 / $script:mouseStep }
 $profilePath = Join-Path $Root ('config\input\' + $profileName + '.ini')
 $utf8 = New-Object System.Text.UTF8Encoding($false)
 
@@ -360,6 +364,7 @@ if ($native) {
         if ($ok) { $at = $i + 8; break }
     }
     if ($at -lt 0) { Fail @("The game patch has no settings block (OOTMCAM1): $src", 'Download the mod again.') }
+    if ($mouseStep -ne 1.0) { Write-Host ([string]::Format($inv, '    mouse_step         = {0} (game pixels per mouse count)', $mouseStep)) }
     $yaw = [single](Get-NativeDegrees $sensX)
     $pitch = [single](Get-NativeDegrees $sensY)
     if ($invertY) { $pitch = [single](-$pitch) }   # keep it a 4-byte float for GetBytes
@@ -374,6 +379,48 @@ if ($native) {
     if (-not $DryRun) { Move-Item -LiteralPath $ipsPath -Destination $ipsOff -Force }
     Write-Host '  game patch    : OFF (MouseCamera-Native renamed to .ips.off)'
 }
+
+# ---------------------------------------------------------------- the helper starts by itself (native camera)
+# OoT-MouseCapture.exe runs from its own copy in %LOCALAPPDATA% (the copy in this folder stays free, so the mod
+# can always be updated), is started now, and is started again by Windows at logon. It waits for the game and only
+# acts while the game is in front. mouse_camera = stick (or helper_autostart = false) removes it again.
+function Set-HelperAutostart([bool]$on) {
+    if ([Environment]::OSVersion.Platform -ne 'Win32NT') { return }
+    try {
+        $startup = [Environment]::GetFolderPath('Startup')
+        $lnk = [IO.Path]::Combine($startup, 'OoT-MouseCapture.lnk')
+        $src = [IO.Path]::Combine($Root, 'OoT-MouseCapture.exe')
+        $dstDir = [IO.Path]::Combine([Environment]::GetFolderPath('LocalApplicationData'), 'OoT-MouseCapture')
+        $dst = [IO.Path]::Combine($dstDir, 'OoT-MouseCapture.exe')
+        $running = @(Get-Process -Name 'OoT-MouseCapture' -ErrorAction SilentlyContinue)
+        if ($DryRun) { Write-Host ('  helper        : (dry run) would be ' + $(if ($on) { 'started with Windows' } else { 'removed' })); return }
+        if ($on) {
+            if (-not (Test-Path -LiteralPath $src)) { Write-Host '  helper        : OoT-MouseCapture.exe is not in this folder, so it cannot start by itself' -ForegroundColor Yellow; return }
+            New-Item -ItemType Directory -Force -Path $dstDir | Out-Null
+            $running | Where-Object { $_.Path -eq $dst -or $_.Path -eq $src } | Stop-Process -Force -ErrorAction SilentlyContinue
+            Start-Sleep -Milliseconds 400
+            Copy-Item -LiteralPath $src -Destination $dst -Force
+            $sh = New-Object -ComObject WScript.Shell
+            $s = $sh.CreateShortcut($lnk)
+            $s.TargetPath = $dst
+            $s.Arguments = '--data "' + $Root + '"'
+            $s.WorkingDirectory = $dstDir
+            $s.WindowStyle = 7
+            $s.Description = 'OOT native mouse camera helper (waits for the game, only acts while it is in front)'
+            $s.Save()
+            Start-Process -FilePath $dst -ArgumentList ('--data "' + $Root + '"') -WorkingDirectory $dstDir -WindowStyle Minimized
+            Write-Host '  helper        : running now and starts with Windows (OoT-MouseCapture, minimized in the taskbar)'
+        } else {
+            $had = Test-Path -LiteralPath $lnk
+            if ($had) { Remove-Item -LiteralPath $lnk -Force }
+            $running | Where-Object { $_.Path -eq $dst } | Stop-Process -Force -ErrorAction SilentlyContinue
+            if ($had) { Write-Host '  helper        : no longer starts with Windows' }
+        }
+    } catch {
+        Write-Host ('  helper        : could not set it up to start by itself (' + $_.Exception.Message + '). Open OoT-MouseCapture.exe by hand.') -ForegroundColor Yellow
+    }
+}
+Set-HelperAutostart ($native -and $autostart)
 
 # ---------------------------------------------------------------- summary
 Write-Host ''
@@ -397,9 +444,15 @@ if ($changed.Count -gt 0) {
 }
 Write-Host ''
 if ($native) {
-    Write-Host '  Done. Each time you play:' -ForegroundColor Green
-    Write-Host '    1. Start OoT-MouseCapture.exe (it can stay open).' -ForegroundColor Green
-    Write-Host '    2. Start the game in Lichii, click the picture once, press Ctrl+F9 once (the pointer disappears).' -ForegroundColor Green
+    if ($autostart) {
+        Write-Host '  Done. Each time you play: start the game in Lichii and click the picture once.' -ForegroundColor Green
+        Write-Host '    The helper (OoT-MouseCapture) is already running by itself. If the camera misbehaves, send' -ForegroundColor Green
+        Write-Host '    the file OoT-MouseCapture-log.txt from this folder: it records what the helper sees.' -ForegroundColor Green
+    } else {
+        Write-Host '  Done. Each time you play:' -ForegroundColor Green
+        Write-Host '    1. Start OoT-MouseCapture.exe (it can stay open).' -ForegroundColor Green
+        Write-Host '    2. Start the game in Lichii and click the picture once.' -ForegroundColor Green
+    }
     Write-Host '    Alt+Tab gives the normal mouse back.' -ForegroundColor Green
 } else {
     Write-Host '  Done. Start Lichii. Each time you start the game: click its window, press Ctrl+F9 once.' -ForegroundColor Green
